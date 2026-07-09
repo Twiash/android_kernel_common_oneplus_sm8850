@@ -433,10 +433,17 @@ static void update_ninja_remap_flag(struct drm_device *dev)
 	struct drm_connector_list_iter conn_iter;
 	extern int wild_dp_is_connected;
 	int found_dp = 0;
+	
+	pr_info("NINJA-DRM: Hotplug event triggered!\n");
 
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(connector, &conn_iter) {
-		if (connector->name && strstr(connector->name, "DP-1")) {
+		
+		pr_info("NINJA-DRM: Connector Name = %s, Status = %d\n", 
+		        connector->name ? connector->name : "NULL", 
+		        READ_ONCE(connector->status));
+				
+		if (connector->name && strstr(connector->name, "DP")) {
 			if (READ_ONCE(connector->status) == connector_status_connected)
 				found_dp = 1;
 		}
@@ -444,6 +451,7 @@ static void update_ninja_remap_flag(struct drm_device *dev)
 	drm_connector_list_iter_end(&conn_iter);
 
 	wild_dp_is_connected = found_dp;
+	pr_info("NINJA-DRM: wild_dp_is_connected = %d\n", wild_dp_is_connected);
 }
 
 /**

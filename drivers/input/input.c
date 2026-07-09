@@ -25,6 +25,7 @@
 #include <linux/kstrtox.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
+#include <linux/moduleparam.h>
 #include "input-compat.h"
 #include "input-core-private.h"
 #include "input-poller.h"
@@ -35,6 +36,7 @@ MODULE_LICENSE("GPL");
 
 int wild_dp_is_connected = 0;
 EXPORT_SYMBOL(wild_dp_is_connected);
+core_param(ninja_dp_flag, wild_dp_is_connected, int, 0644);
 
 #define INPUT_MAX_CHAR_DEVICES		1024
 #define INPUT_FIRST_DYNAMIC_DEV		256

@@ -33,6 +33,9 @@ MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
 MODULE_DESCRIPTION("Input core");
 MODULE_LICENSE("GPL");
 
+int wild_dp_is_connected = 0;
+EXPORT_SYMBOL(wild_dp_is_connected);
+
 #define INPUT_MAX_CHAR_DEVICES		1024
 #define INPUT_FIRST_DYNAMIC_DEV		256
 static DEFINE_IDA(input_ida);
@@ -387,10 +390,62 @@ void input_handle_event(struct input_dev *dev,
  * to 'seed' initial state of a switch or initial position of absolute
  * axis, etc.
  */
+static inline int clamp_value(int value, int minimum, int maximum)
+{
+	if (value < minimum)
+		return minimum;
+	if (value > maximum)
+		return maximum;
+	return value;
+}
+
+static int remap_y(int value)
+{
+	int in_min = 0;
+	int in_max = 26879;
+	int out_min = 2630;
+	int out_max = 24240;
+	s64 in_range = (s64)in_max - in_min;
+	s64 out_range = (s64)out_max - out_min;
+	s64 mapped;
+
+	if (in_range <= 0 || out_range < 0)
+		return value;
+
+	value = clamp_value(value, in_min, in_max);
+	mapped = out_min + ((s64)(value - in_min) * out_range + in_range / 2) /
+		 in_range;
+
+	return clamp_value((int)mapped, in_min, in_max);
+}
+
+static int remap_x(int value)
+{
+	int minimum = 0;
+	int maximum = 12159;
+
+	if (maximum <= minimum)
+		return value;
+
+	value = clamp_value(value, minimum, maximum);
+
+	return value;
+}
+
 void input_event(struct input_dev *dev,
 		 unsigned int type, unsigned int code, int value)
 {
 	unsigned long flags;
+
+	if (wild_dp_is_connected) {
+		if (type == EV_ABS) {
+			if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
+				value = remap_y(value);
+			} else if (code == ABS_MT_POSITION_X || code == ABS_X) {
+				value = remap_x(value);
+			}
+		}
+	}
 
 	if (is_event_supported(type, dev->evbit, EV_MAX)) {
 

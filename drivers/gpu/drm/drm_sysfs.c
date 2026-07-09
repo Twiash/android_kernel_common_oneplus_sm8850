@@ -427,6 +427,25 @@ void drm_sysfs_lease_event(struct drm_device *dev)
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
 }
 
+static void update_ninja_remap_flag(struct drm_device *dev)
+{
+	struct drm_connector *connector;
+	struct drm_connector_list_iter conn_iter;
+	extern int wild_dp_is_connected;
+	int found_dp = 0;
+
+	drm_connector_list_iter_begin(dev, &conn_iter);
+	drm_for_each_connector_iter(connector, &conn_iter) {
+		if (connector->name && strstr(connector->name, "DP-1")) {
+			if (READ_ONCE(connector->status) == connector_status_connected)
+				found_dp = 1;
+		}
+	}
+	drm_connector_list_iter_end(&conn_iter);
+
+	wild_dp_is_connected = found_dp;
+}
+
 /**
  * drm_sysfs_hotplug_event - generate a DRM uevent
  * @dev: DRM device
@@ -442,6 +461,8 @@ void drm_sysfs_hotplug_event(struct drm_device *dev)
 {
 	char *event_string = "HOTPLUG=1";
 	char *envp[] = { event_string, NULL };
+
+	update_ninja_remap_flag(dev);
 
 	drm_dbg_kms(dev, "generating hotplug event\n");
 
@@ -462,6 +483,8 @@ void drm_sysfs_connector_hotplug_event(struct drm_connector *connector)
 	struct drm_device *dev = connector->dev;
 	char hotplug_str[] = "HOTPLUG=1", conn_id[21];
 	char *envp[] = { hotplug_str, conn_id, NULL };
+
+	update_ninja_remap_flag(dev);
 
 	snprintf(conn_id, sizeof(conn_id),
 		 "CONNECTOR=%u", connector->base.id);

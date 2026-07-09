@@ -441,11 +441,35 @@ void input_event(struct input_dev *dev,
 
 	if (wild_dp_is_connected) {
 		if (type == EV_ABS) {
-			if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
-				value = remap_y(value);
-			} else if (code == ABS_MT_POSITION_X || code == ABS_X) {
-				value = remap_x(value);
+			unsigned int target_code = code;
+			int target_value = value;
+
+			/* 1. HOÁN ĐỔI TRỤC (SWAP AXES) ĐỂ ÉP MÀN NGANG */
+			if (code == ABS_MT_POSITION_X) {
+				target_code = ABS_MT_POSITION_Y;
+			} else if (code == ABS_MT_POSITION_Y) {
+				target_code = ABS_MT_POSITION_X;
+				/* Thường khi xoay ngang, một trục sẽ bị ngược hướng. 
+				 * Lấy Max Y (26879) trừ đi value để đảo chiều vuốt.
+				 * Nếu chuột di chuyển ngược, hãy xoá dòng trừ này đi. */
+				target_value = 26879 - value; 
+			} else if (code == ABS_X) {
+				target_code = ABS_Y;
+			} else if (code == ABS_Y) {
+				target_code = ABS_X;
+				target_value = 26879 - value;
 			}
+
+			/* 2. ÁP DỤNG REMAP LÊN TRỤC ĐÃ ĐƯỢC HOÁN ĐỔI */
+			if (target_code == ABS_MT_POSITION_Y || target_code == ABS_Y) {
+				target_value = remap_y(target_value);
+			} else if (target_code == ABS_MT_POSITION_X || target_code == ABS_X) {
+				target_value = remap_x(target_value);
+			}
+
+			/* 3. GHI ĐÈ KẾT QUẢ CUỐI CÙNG */
+			code = target_code;
+			value = target_value;
 		}
 	}
 

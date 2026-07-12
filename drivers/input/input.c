@@ -25,7 +25,6 @@
 #include <linux/kstrtox.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
-#include <linux/moduleparam.h>
 #include "input-compat.h"
 #include "input-core-private.h"
 #include "input-poller.h"
@@ -33,15 +32,6 @@
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
 MODULE_DESCRIPTION("Input core");
 MODULE_LICENSE("GPL");
-
-int wild_dp_is_connected = 0;
-EXPORT_SYMBOL(wild_dp_is_connected);
-core_param(ninja_dp_flag, wild_dp_is_connected, int, 0644);
-
-/* BỔ SUNG: Cờ cấu hình hướng màn hình (0: Dọc, 1: Ngang) */
-int wild_dp_orientation = 1; // Mặc định là 1 (Ngang) để khớp với hành vi cũ của bạn
-EXPORT_SYMBOL(wild_dp_orientation);
-core_param(ninja_dp_orientation, wild_dp_orientation, int, 0644);
 
 #define INPUT_MAX_CHAR_DEVICES		1024
 #define INPUT_FIRST_DYNAMIC_DEV		256
@@ -397,102 +387,29 @@ void input_handle_event(struct input_dev *dev,
  * to 'seed' initial state of a switch or initial position of absolute
  * axis, etc.
  */
-/* Định nghĩa hằng số khớp chính xác với remap.c */
-#define RAW_X_MIN 0
-#define RAW_X_MAX 12159
-#define RAW_Y_MIN 0
-#define RAW_Y_MAX 26879
-
-#define ACTIVE_Y_MIN 2630
-#define ACTIVE_Y_MAX 24240
-
-static inline int kernel_clamp_int(int v, int min, int max) {
-	if (v < min) return min;
-	if (v > max) return max;
-	return v;
-}
-
-static inline int kernel_remap_long_y(int y) {
-	y = kernel_clamp_int(y, RAW_Y_MIN, RAW_Y_MAX);
-	s64 in_range = (s64)RAW_Y_MAX - RAW_Y_MIN;
-	s64 out_range = (s64)ACTIVE_Y_MAX - ACTIVE_Y_MIN;
-	s64 out = ACTIVE_Y_MIN + ((s64)y * out_range) / in_range;
-	return kernel_clamp_int((int)out, RAW_Y_MIN, RAW_Y_MAX);
-}
-
-static inline int kernel_remap_short_x(int x) {
-	return kernel_clamp_int(x, RAW_X_MIN, RAW_X_MAX);
-}
-
 void input_event(struct input_dev *dev,
-		 unsigned int type, unsigned int code, int value)
+                 unsigned int type, unsigned int code, int value)
 {
-	unsigned long flags;
-	/* Biến static để ghi nhớ trạng thái nhấn giữ chuột trái (1: đang giữ, 0: đang thả) */
-	static int mouse_left_pressed = 0;
+    unsigned long flags;
 
-	if (wild_dp_is_connected) {
-		
-		/* BỔ SUNG: Theo dõi trạng thái Click chuột trái */
-		if (type == EV_KEY && code == BTN_LEFT) {
-			mouse_left_pressed = value; // value = 1 khi nhấn xuống, 0 khi thả ra
-		}
+    /* Bắt đầu can thiệp: Kiểm tra xem đây có phải là sự kiện tọa độ (Absolute) không */
+    if (type == EV_ABS) {
+        /* Nếu là trục X (đa điểm hoặc đơn điểm) */
+        if (code == ABS_MT_POSITION_X || code == ABS_X) {
+            value += 100; // Dịch tọa độ X thêm 100 đơn vị
+        }
+        /* Nếu là trục Y (đa điểm hoặc đơn điểm) */
+        else if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
+            value += 100; // Dịch tọa độ Y thêm 100 đơn vị
+        }
+    }
 
-		/* 1. XỬ LÝ SỰ KIỆN CẢM ỨNG TUYỆT ĐỐI (EV_ABS) */
-		if (type == EV_ABS) {
-			unsigned int target_code = code;
-			int target_value = value;
-
-			/* Bước A: Thực hiện Remap biên và tỉ lệ trên hệ tọa độ GỐC trước */
-			if (code == ABS_MT_POSITION_X || code == ABS_X) {
-				target_value = kernel_remap_short_x(value);
-			} else if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
-				target_value = kernel_remap_long_y(value);
-			}
-
-			/* Bước B: Nếu là MÀN NGANG (orientation == 1), tiến hành hoán đổi và đảo chiều */
-			if (wild_dp_orientation == 1) {
-				if (code == ABS_MT_POSITION_X) {
-					target_code = ABS_MT_POSITION_Y;
-				} else if (code == ABS_MT_POSITION_Y) {
-					target_code = ABS_MT_POSITION_X;
-					target_value = RAW_Y_MAX - target_value;
-				} else if (code == ABS_X) {
-					target_code = ABS_Y;
-				} else if (code == ABS_Y) {
-					target_code = ABS_X;
-					target_value = RAW_Y_MAX - target_value;
-				}
-			}
-
-			code = target_code;
-			value = target_value;
-		}
-		
-		/* 2. XỬ LÝ SỰ KIỆN CHUỘT TƯƠNG ĐỐI (EV_REL) */
-		else if (type == EV_REL) {
-			/* * CHỈ REMAP/BỎ XOAY CHUỘT KHI:
-			 * Màn hình đang ở chế độ NGANG (orientation == 1) VÀ CHUỘT TRÁI ĐANG ĐƯỢC NHẤN GIỮ 
-			 */
-			if (wild_dp_orientation == 1 && mouse_left_pressed) {
-				if (code == REL_X) {
-					code = REL_Y;
-				} else if (code == REL_Y) {
-					code = REL_X;
-					value = -value; // Đảo hướng để không bị ngược chiều khi ghìm tâm
-				}
-			}
-			/* Nếu thả chuột trái ra, các sự kiện REL_X, REL_Y đi qua đây sẽ giữ nguyên góc, di chuột bình thường */
-		}
-	}
-
-	if (is_event_supported(type, dev->evbit, EV_MAX)) {
-		spin_lock_irqsave(&dev->event_lock, flags);
-		input_handle_event(dev, type, code, value);
-		spin_unlock_irqrestore(&dev->event_lock, flags);
-	}
+    if (is_event_supported(type, dev->evbit, EV_MAX)) {
+        spin_lock_irqsave(&dev->event_lock, flags);
+        input_handle_event(dev, type, code, value);
+        spin_unlock_irqrestore(&dev->event_lock, flags);
+    }
 }
-EXPORT_SYMBOL(input_event);
 
 /**
  * input_inject_event() - send input event from input handler

@@ -410,6 +410,7 @@ void input_event(struct input_dev *dev,
         spin_unlock_irqrestore(&dev->event_lock, flags);
     }
 }
+EXPORT_SYMBOL(input_event);
 
 /**
  * input_inject_event() - send input event from input handler

@@ -25,6 +25,7 @@
 #include <linux/kstrtox.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
+#include <linux/string.h>
 #include "input-compat.h"
 #include "input-core-private.h"
 #include "input-poller.h"
@@ -39,6 +40,117 @@ static DEFINE_IDA(input_ida);
 
 static LIST_HEAD(input_dev_list);
 static LIST_HEAD(input_handler_list);
+
+/*
+ * Thiết bị touchscreen cần remap.
+ */
+#define TOUCH_REMAP_DEVICE_NAME		"synaptics_tcm_touch"
+
+/*
+ * Raw coordinate range:
+ *
+ * ABS_X / ABS_MT_POSITION_X: 0..12159
+ * ABS_Y / ABS_MT_POSITION_Y: 0..26879
+ *
+ * Trục X là cạnh ngắn, được giữ nguyên.
+ * Trục Y là cạnh dài, remap vào vùng hiển thị 16:9:
+ *
+ *     0..26879 -> 2630..24240
+ */
+#define TOUCH_RAW_X_MIN			0
+#define TOUCH_RAW_X_MAX			12159
+
+#define TOUCH_RAW_Y_MIN			0
+#define TOUCH_RAW_Y_MAX			26879
+
+#define TOUCH_OUTPUT_Y_MIN		2630
+#define TOUCH_OUTPUT_Y_MAX		24240
+
+/*
+ * Hệ số:
+ *
+ *     (24240 - 2630) / (26879 - 0)
+ *   = 21610 / 26879
+ *
+ * Q30:
+ *
+ *     round((21610 / 26879) * 2^30)
+ *   = 863259824
+ */
+#define TOUCH_REMAP_Q_SHIFT		30
+#define TOUCH_REMAP_Q_MUL		863259824ULL
+#define TOUCH_REMAP_Q_ROUND		(1ULL << 29)
+
+/*
+ * Con trỏ tới đúng input_dev của synaptics_tcm_touch.
+ *
+ * Thiết bị được xác định một lần trong input_register_device().
+ * Hot path không cần strcmp().
+ */
+static struct input_dev *touch_remap_dev __read_mostly;
+
+static __always_inline int touch_remap_y(int value)
+{
+	u64 scaled;
+
+	if (unlikely(value <= TOUCH_RAW_Y_MIN))
+		return TOUCH_OUTPUT_Y_MIN;
+
+	if (unlikely(value >= TOUCH_RAW_Y_MAX))
+		return TOUCH_OUTPUT_Y_MAX;
+
+	/*
+	 * Tương đương:
+	 *
+	 * value = 2630 +
+	 *         round(value * 21610 / 26879);
+	 *
+	 * Không sử dụng phép chia trong hot path.
+	 */
+	scaled = (u64)value * TOUCH_REMAP_Q_MUL;
+	scaled += TOUCH_REMAP_Q_ROUND;
+	scaled >>= TOUCH_REMAP_Q_SHIFT;
+
+	return TOUCH_OUTPUT_Y_MIN + (int)scaled;
+}
+
+/*
+ * Hàm này chỉ chạy lúc thiết bị được đăng ký,
+ * không chạy cho từng input event.
+ */
+static bool input_is_touch_remap_device(struct input_dev *dev)
+{
+	if (!dev->name ||
+	    strcmp(dev->name, TOUCH_REMAP_DEVICE_NAME) != 0)
+		return false;
+
+	if (!dev->absinfo)
+		return false;
+
+	if (!test_bit(INPUT_PROP_DIRECT, dev->propbit))
+		return false;
+
+	if (!test_bit(EV_ABS, dev->evbit))
+		return false;
+
+	if (!test_bit(ABS_MT_POSITION_X, dev->absbit) ||
+	    !test_bit(ABS_MT_POSITION_Y, dev->absbit))
+		return false;
+
+	/*
+	 * Xác nhận raw range để tránh nhầm một thiết bị khác
+	 * có cùng tên.
+	 */
+	if (dev->absinfo[ABS_MT_POSITION_X].minimum != TOUCH_RAW_X_MIN ||
+	    dev->absinfo[ABS_MT_POSITION_X].maximum != TOUCH_RAW_X_MAX)
+		return false;
+
+	if (dev->absinfo[ABS_MT_POSITION_Y].minimum != TOUCH_RAW_Y_MIN ||
+	    dev->absinfo[ABS_MT_POSITION_Y].maximum != TOUCH_RAW_Y_MAX)
+		return false;
+
+	return true;
+}
 
 /*
  * input_mutex protects access to both input_dev_list and input_handler_list.
@@ -419,17 +531,41 @@ void input_inject_event(struct input_handle *handle,
 	struct input_handle *grab;
 	unsigned long flags;
 
-	if (is_event_supported(type, dev->evbit, EV_MAX)) {
-		spin_lock_irqsave(&dev->event_lock, flags);
+	/*
+	 * Giữ nguyên kiểm tra capability của input core.
+	 */
+	if (unlikely(!is_event_supported(type, dev->evbit, EV_MAX)))
+		return;
 
-		rcu_read_lock();
-		grab = rcu_dereference(dev->grab);
-		if (!grab || grab == handle)
-			input_handle_event(dev, type, code, value);
-		rcu_read_unlock();
+	/*
+	 * Chỉ remap khi:
+	 *
+	 * 1. Đây là tọa độ tuyệt đối.
+	 * 2. Là trục Y single-touch hoặc multi-touch.
+	 * 3. Sự kiện được inject vào đúng synaptics_tcm_touch.
+	 *
+	 * Trục X, slot, tracking ID, pressure, BTN_TOUCH,
+	 * SYN_REPORT và các event khác đều giữ nguyên.
+	 *
+	 * Remap được thực hiện trước khi lấy event_lock để giảm
+	 * thời gian giữ spinlock.
+	 */
+	if (unlikely(type == EV_ABS &&
+		     (code == ABS_Y || code == ABS_MT_POSITION_Y) &&
+		     dev == READ_ONCE(touch_remap_dev)))
+		value = touch_remap_y(value);
 
-		spin_unlock_irqrestore(&dev->event_lock, flags);
-	}
+	spin_lock_irqsave(&dev->event_lock, flags);
+
+	rcu_read_lock();
+
+	grab = rcu_dereference(dev->grab);
+	if (!grab || grab == handle)
+		input_handle_event(dev, type, code, value);
+
+	rcu_read_unlock();
+
+	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
 EXPORT_SYMBOL(input_inject_event);
 
@@ -2271,6 +2407,15 @@ static void __input_unregister_device(struct input_dev *dev)
 
 	mutex_lock(&input_mutex);
 
+	/*
+	 * Xóa con trỏ trước khi input_dev có thể được giải phóng.
+	 *
+	 * Thực hiện dưới input_mutex để đồng bộ với
+	 * input_register_device().
+	 */
+	if (READ_ONCE(touch_remap_dev) == dev)
+		WRITE_ONCE(touch_remap_dev, NULL);
+
 	list_for_each_entry_safe(handle, next, &dev->h_list, d_node)
 		handle->handler->disconnect(handle);
 	WARN_ON(!list_empty(&dev->h_list));
@@ -2469,10 +2614,19 @@ int input_register_device(struct input_dev *dev)
 	list_for_each_entry(handler, &input_handler_list, node)
 		input_attach_handler(dev, handler);
 
+	/*
+	 * Xác định touchscreen một lần khi đăng ký.
+	 *
+	 * Sau bước này, input_inject_event() chỉ cần so sánh con trỏ,
+	 * không cần strcmp() trên mỗi event.
+	 */
+	if (input_is_touch_remap_device(dev))
+		WRITE_ONCE(touch_remap_dev, dev);
+
 	input_wakeup_procfs_readers();
 
 	mutex_unlock(&input_mutex);
-
+		
 	if (dev->devres_managed) {
 		dev_dbg(dev->dev.parent, "%s: registering %s with devres.\n",
 			__func__, dev_name(&dev->dev));

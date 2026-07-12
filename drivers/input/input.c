@@ -360,7 +360,17 @@ void input_handle_event(struct input_dev *dev,
 	int disposition;
 
 	lockdep_assert_held(&dev->event_lock);
-
+	/* Bắt đầu can thiệp: Kiểm tra xem đây có phải là sự kiện tọa độ (Absolute) không */
+    	if (type == EV_ABS) {
+        /* Nếu là trục X (đa điểm hoặc đơn điểm) */
+        	if (code == ABS_MT_POSITION_X || code == ABS_X) {
+            value += 1000; // Dịch tọa độ X thêm 100 đơn vị
+        	}
+        /* Nếu là trục Y (đa điểm hoặc đơn điểm) */
+        	else if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
+            	value += 1000; // Dịch tọa độ Y thêm 100 đơn vị
+       	 	}
+    	}
 	disposition = input_get_disposition(dev, type, code, &value);
 	if (disposition != INPUT_IGNORE_EVENT) {
 		if (type != EV_SYN)
@@ -391,19 +401,6 @@ void input_event(struct input_dev *dev,
                  unsigned int type, unsigned int code, int value)
 {
     unsigned long flags;
-
-    /* Bắt đầu can thiệp: Kiểm tra xem đây có phải là sự kiện tọa độ (Absolute) không */
-    if (type == EV_ABS) {
-        /* Nếu là trục X (đa điểm hoặc đơn điểm) */
-        if (code == ABS_MT_POSITION_X || code == ABS_X) {
-            value += 1500; // Dịch tọa độ X thêm 100 đơn vị
-        }
-        /* Nếu là trục Y (đa điểm hoặc đơn điểm) */
-        else if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
-            value += 1500; // Dịch tọa độ Y thêm 100 đơn vị
-        }
-    }
-
     if (is_event_supported(type, dev->evbit, EV_MAX)) {
         spin_lock_irqsave(&dev->event_lock, flags);
         input_handle_event(dev, type, code, value);

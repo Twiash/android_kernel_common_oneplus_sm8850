@@ -396,11 +396,11 @@ void input_event(struct input_dev *dev,
     if (type == EV_ABS) {
         /* Nếu là trục X (đa điểm hoặc đơn điểm) */
         if (code == ABS_MT_POSITION_X || code == ABS_X) {
-            value += 100; // Dịch tọa độ X thêm 100 đơn vị
+            value += 1500; // Dịch tọa độ X thêm 100 đơn vị
         }
         /* Nếu là trục Y (đa điểm hoặc đơn điểm) */
         else if (code == ABS_MT_POSITION_Y || code == ABS_Y) {
-            value += 100; // Dịch tọa độ Y thêm 100 đơn vị
+            value += 1500; // Dịch tọa độ Y thêm 100 đơn vị
         }
     }
 

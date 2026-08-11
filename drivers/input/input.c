@@ -55,7 +55,7 @@ static LIST_HEAD(input_handler_list);
  * Trục X là cạnh ngắn, được giữ nguyên.
  * Trục Y là cạnh dài, remap vào vùng hiển thị 16:9:
  *
- *     0..26879 -> 2630..24250
+ * Offset thử nghiệm: 800
  */
 #define TOUCH_RAW_X_MIN			0
 #define TOUCH_RAW_X_MAX			12159
@@ -63,22 +63,22 @@ static LIST_HEAD(input_handler_list);
 #define TOUCH_RAW_Y_MIN			0
 #define TOUCH_RAW_Y_MAX			26879
 
-#define TOUCH_OUTPUT_Y_MIN		2630
-#define TOUCH_OUTPUT_Y_MAX		24250
+#define TOUCH_OUTPUT_Y_MIN		800
+#define TOUCH_OUTPUT_Y_MAX		26079
 
 /*
  * Hệ số:
  *
- *     (24250 - 2630) / (26879 - 0)
- *   = 21620 / 26879
+ *     (26079 - 800) / (26879 - 0)
+ *   = 25279 / 26879
  *
  * Q30:
  *
- *     round((21620 / 26879) * 2^30)
- *   = 863659196
+ *     round((25279 / 26879) * 2^30)
+ *   = 1009825489
  */
 #define TOUCH_REMAP_Q_SHIFT		30
-#define TOUCH_REMAP_Q_MUL		863659196ULL
+#define TOUCH_REMAP_Q_MUL		1009825489ULL
 #define TOUCH_REMAP_Q_ROUND		(1ULL << 29)
 
 /*

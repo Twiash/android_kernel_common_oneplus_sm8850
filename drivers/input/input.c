@@ -55,7 +55,7 @@ static LIST_HEAD(input_handler_list);
  * Trục X là cạnh ngắn, được giữ nguyên.
  * Trục Y là cạnh dài, remap vào vùng hiển thị 16:9:
  *
- *     0..26879 -> 2630..24240
+ *     0..26879 -> 2630..24250
  */
 #define TOUCH_RAW_X_MIN			0
 #define TOUCH_RAW_X_MAX			12159
@@ -64,21 +64,21 @@ static LIST_HEAD(input_handler_list);
 #define TOUCH_RAW_Y_MAX			26879
 
 #define TOUCH_OUTPUT_Y_MIN		2630
-#define TOUCH_OUTPUT_Y_MAX		24240
+#define TOUCH_OUTPUT_Y_MAX		24250
 
 /*
  * Hệ số:
  *
- *     (24240 - 2630) / (26879 - 0)
- *   = 21610 / 26879
+ *     (24250 - 2630) / (26879 - 0)
+ *   = 21620 / 26879
  *
  * Q30:
  *
- *     round((21610 / 26879) * 2^30)
- *   = 863259824
+ *     round((21620 / 26879) * 2^30)
+ *   = 863659196
  */
 #define TOUCH_REMAP_Q_SHIFT		30
-#define TOUCH_REMAP_Q_MUL		863259824ULL
+#define TOUCH_REMAP_Q_MUL		863659196ULL
 #define TOUCH_REMAP_Q_ROUND		(1ULL << 29)
 
 /*
@@ -551,7 +551,8 @@ void input_inject_event(struct input_handle *handle,
 	 * thời gian giữ spinlock.
 	 */
 	if (unlikely(type == EV_ABS &&
-		     (code == ABS_Y || code == ABS_MT_POSITION_Y) &&
+		     (code == ABS_Y || code == ABS_MT_POSITION_Y ||
+		      code == ABS_MT_TOOL_Y) &&
 		     dev == READ_ONCE(touch_remap_dev)))
 		value = touch_remap_y(value);
 

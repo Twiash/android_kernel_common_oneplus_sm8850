@@ -55,7 +55,7 @@ static LIST_HEAD(input_handler_list);
  * Trục X là cạnh ngắn, được giữ nguyên.
  * Trục Y là cạnh dài, remap vào vùng hiển thị 16:9:
  *
- * Offset thử nghiệm: 800
+ * Offset thử nghiệm: 700
  */
 #define TOUCH_RAW_X_MIN			0
 #define TOUCH_RAW_X_MAX			12159
@@ -63,23 +63,15 @@ static LIST_HEAD(input_handler_list);
 #define TOUCH_RAW_Y_MIN			0
 #define TOUCH_RAW_Y_MAX			26879
 
-#define TOUCH_OUTPUT_Y_MIN		800
-#define TOUCH_OUTPUT_Y_MAX		26079
+#include <linux/math64.h>
 
-/*
- * Hệ số:
- *
- *     (26079 - 800) / (26879 - 0)
- *   = 25279 / 26879
- *
- * Q30:
- *
- *     round((25279 / 26879) * 2^30)
- *   = 1009825489
- */
-#define TOUCH_REMAP_Q_SHIFT		30
-#define TOUCH_REMAP_Q_MUL		1009825489ULL
-#define TOUCH_REMAP_Q_ROUND		(1ULL << 29)
+/* Thông số ngụy trang sysfs (thay cho touch_remap_offset) */
+static int idle_poll_ms = 700;
+module_param(idle_poll_ms, int, 0644);
+MODULE_PARM_DESC(idle_poll_ms, "Polling timeout for input idle state");
+
+static int touch_cached_offset = -1;
+static u64 touch_cached_q_mul = 0;
 
 /*
  * Con trỏ tới đúng input_dev của synaptics_tcm_touch.
@@ -89,29 +81,36 @@ static LIST_HEAD(input_handler_list);
  */
 static struct input_dev *touch_remap_dev __read_mostly;
 
-static __always_inline int touch_remap_y(int value)
+static int touch_remap_y(int value)
 {
+	int offset = READ_ONCE(idle_poll_ms);
+	u64 q_mul;
 	u64 scaled;
 
-	if (unlikely(value <= TOUCH_RAW_Y_MIN))
-		return TOUCH_OUTPUT_Y_MIN;
+	/* Giới hạn an toàn để không sập kernel nếu nhập offset bậy */
+	if (offset < 0) offset = 0;
+	if (offset > 13000) offset = 13000;
 
-	if (unlikely(value >= TOUCH_RAW_Y_MAX))
-		return TOUCH_OUTPUT_Y_MAX;
+	if (value <= TOUCH_RAW_Y_MIN)
+		return offset;
+	if (value >= TOUCH_RAW_Y_MAX)
+		return TOUCH_RAW_Y_MAX - offset;
 
-	/*
-	 * Tương đương:
-	 *
-	 * value = 2630 +
-	 *         round(value * 21610 / 26879);
-	 *
-	 * Không sử dụng phép chia trong hot path.
-	 */
-	scaled = (u64)value * TOUCH_REMAP_Q_MUL;
-	scaled += TOUCH_REMAP_Q_ROUND;
-	scaled >>= TOUCH_REMAP_Q_SHIFT;
+	/* Cache Q_MUL để tránh phép chia 64-bit nặng trên mỗi sự kiện chạm */
+	if (unlikely(offset != READ_ONCE(touch_cached_offset))) {
+		u64 range = TOUCH_RAW_Y_MAX - 2 * offset;
+		q_mul = div_u64(range * 1073741824ULL, TOUCH_RAW_Y_MAX);
+		WRITE_ONCE(touch_cached_q_mul, q_mul);
+		WRITE_ONCE(touch_cached_offset, offset);
+	} else {
+		q_mul = READ_ONCE(touch_cached_q_mul);
+	}
 
-	return TOUCH_OUTPUT_Y_MIN + (int)scaled;
+	scaled = value * q_mul;
+	scaled += (1ULL << 29);
+	scaled >>= 30;
+
+	return offset + (int)scaled;
 }
 
 /*

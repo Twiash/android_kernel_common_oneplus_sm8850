@@ -551,8 +551,7 @@ void input_inject_event(struct input_handle *handle,
 	 * thời gian giữ spinlock.
 	 */
 	if (unlikely(type == EV_ABS &&
-		     (code == ABS_Y || code == ABS_MT_POSITION_Y ||
-		      code == ABS_MT_TOOL_Y) &&
+		     (code == ABS_Y || code == ABS_MT_POSITION_Y) &&
 		     dev == READ_ONCE(touch_remap_dev)))
 		value = touch_remap_y(value);
 

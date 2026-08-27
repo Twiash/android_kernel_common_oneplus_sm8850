@@ -66,7 +66,7 @@ static LIST_HEAD(input_handler_list);
 #include <linux/math64.h>
 
 /* Thông số ngụy trang sysfs (thay cho touch_remap_offset) */
-static int idle_poll_ms = 700;
+static int idle_poll_ms = 0;
 module_param(idle_poll_ms, int, 0644);
 MODULE_PARM_DESC(idle_poll_ms, "Polling timeout for input idle state");
 
